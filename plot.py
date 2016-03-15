@@ -9,9 +9,9 @@ import pyqtgraph as pg
 import numpy as np
 from pyqtgraph.Qt import QtGui
 
-class Plot(pg.PlotWidget):
+class Plot(QtGui.QWidget):
     def __init__(self, channelList = [1,], parent=None):
-        pg.PlotWidget.__init__(self, parent)
+        QtGui.QWidget.__init__(self, parent)
         
         
         self.__Spectrum = None
@@ -30,24 +30,29 @@ class Plot(pg.PlotWidget):
         
         self.colArray = [blue, red, green, black]
         
-        self.createPlot()
+        self.__plot = self.createPlot()
         self.initSpectra()
+        
+        lay = QtGui.QVBoxLayout(self)
+        lay.addWidget(self.__plot)
         
         
      
     def createPlot(self):
-        self.setLabel('bottom','Wavelength [nm]')
-        self.setLabel('left','Amplitude [dBm]')
-        self.setBackground(pg.mkColor(self.backColor))
+        t = pg.PlotWidget()
+        t.setLabel('bottom','Wavelength [nm]')
+        t.setLabel('left','Amplitude [dBm]')
+        t.setBackground(pg.mkColor(self.backColor))
+        return t
         
         
         
     def initSpectra(self):
         self.__sCurves = []
-        self.clear()
+        self.__plot.clear()
         for ch in self.__channelList:
             spec = pg.PlotCurveItem(pen=QtGui.QPen(self.colArray[ch-1],self.lineWidth))
-            self.addItem(spec)
+            self.__plot.addItem(spec)
             self.__sCurves.append(spec)
         
     def plotS(self, x, y):
@@ -60,6 +65,7 @@ class Plot(pg.PlotWidget):
             except:
               pass  
         
+        
     def setChannelList(self, chList):
         self.__channelList = chList
         self.__numSpecs = len(chList)
@@ -68,9 +74,9 @@ class Plot(pg.PlotWidget):
     def setdBm(self, isdBm):
         self.__dBm = isdBm
         if isdBm:
-            self.setLabel('left','Amplitude [dBm]')
+            self.__plot.setLabel('left','Amplitude [dBm]')
         else:
-            self.setLabel('left','Amplitude')
+            self.__plot.setLabel('left','Amplitude')
         
         
         
