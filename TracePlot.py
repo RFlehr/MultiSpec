@@ -52,14 +52,14 @@ class TracePlot(QtGui.QWidget):
      
     def createPlotOptions(self):
         l = QtGui.QLabel(text='Temperatur')
-        self.plotTemp = QtGui.QCheckBox()
-        self.plotTemp.setChecked(True)
-        self.plotTemp.stateChanged.connect(self.showTemp)
+        self.showTempPlot = QtGui.QCheckBox()
+        self.showTempPlot.setChecked(True)
+        self.showTempPlot.stateChanged.connect(self.showTemp)
         w = QtGui.QWidget()
         lay = QtGui.QHBoxLayout()
         lay.addStretch()
         lay.addWidget(l)
-        lay.addWidget(self.plotTemp)
+        lay.addWidget(self.showTempPlot)
         lay.addStretch()
         w.setLayout(lay)
         
@@ -68,7 +68,9 @@ class TracePlot(QtGui.QWidget):
     def initTraces(self):
         self.__plot.__traces = []
         self.__plot.clear()
-        self.__tempTrace = pg.PlotCurveItem(pen=QtGui.QPen(self.colArray[1],self.lineWidth))
+        self.pt = pg.PlotCurveItem(pen=QtGui.QPen(self.colArray[0],self.lineWidth))
+        self.__plot.addItem(self.pt)
+        self.__tempTrace = pg.PlotCurveItem(pen=QtGui.QPen(self.colArray[1],0))
         self.aR.addItem(self.__tempTrace)
         
     def setChannelList(self, chList):
@@ -80,6 +82,13 @@ class TracePlot(QtGui.QWidget):
             pass
         else:
             pass
+        
+    def plotTemp(self,tempArray):
+        t = tempArray
+        self.__tempTrace.setData(t[0],t[1]) 
+        self.__plot.setXRange(np.min(t[0]),np.max(t[0]))
+        #print(t[0])
+        #self.pt.setData(t[0],t[1]) 
         
     def updateViews(self):
         self.aR.setGeometry(self.__plot.getViewBox().sceneBoundingRect())

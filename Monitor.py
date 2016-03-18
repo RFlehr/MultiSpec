@@ -11,11 +11,10 @@ import numpy as np
 
 
 class MonitorThread(threading.Thread):
-    def __init__(self, dataQ, errorQ, device, chList):
+    def __init__(self, dataQ, device, chList):
         threading.Thread.__init__(self)
         
         self.dataQ = dataQ
-        self.errorQ = errorQ
         self.alive = threading.Event()
         self.alive.set()
         
@@ -25,12 +24,7 @@ class MonitorThread(threading.Thread):
         
     def run(self):
         self.h1.enable_spectrum_streaming()
-        print self.h1.spectrumStreamComm.ipAddress
-        
-        start = time.clock()
-        
         while self.alive.isSet():
-            #print('read data')
             self.h1.stream_raw_spectrum()
             
             if len(self.channelList) == 0:
@@ -46,15 +40,11 @@ class MonitorThread(threading.Thread):
             data = data.T*spectrumInvScales + spectrumOffsets
             data = data.T
             if len(data) > 0:
-                timestamp = time.clock() -start
-                #print('Timestamp: ',  timestamp)
-                self.dataQ.put((data, timestamp))
+                self.dataQ.put((data, time.time()))
         
        
         
     def join(self, timeout = None):
-        #self.h1.disable_spectrum_streaming()
-        
         self.alive.clear()
         threading.Thread.join(self, timeout)   
         

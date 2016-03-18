@@ -9,8 +9,8 @@ __title__ =  'MultiSpec'
 __about__ = """Hyperion si255 Interrogation Software
             including Pico Temprature measurements
             """
-__version__ = '0.1.1'
-__date__ = '01.03.2016'
+__version__ = '0.1.2'
+__date__ = '16.03.2016'
 __author__ = 'Roman Flehr'
 __cp__ = u'\u00a9 2016 Loptek GmbH & Co. KG'
 
@@ -21,9 +21,12 @@ from pyqtgraph.Qt import QtGui, QtCore
 import plot as pl
 import TracePlot as tl
 import Monitor as mon
-import hyperion, Queue, time, os
+import hyperion, Queue, os
+from time import time
+from scipy.ndimage.interpolation import shift
 import numpy as np
 from tc08usb import TC08USB, USBTC08_TC_TYPE, USBTC08_ERROR#, USBTC08_UNITS
+from FBGData import FBGData
 
 class MainWindow(QtGui.QMainWindow):
     def __init__(self, parent=None):
@@ -39,10 +42,14 @@ class MainWindow(QtGui.QMainWindow):
         self.peakList = []
         self.__numPeaksArray = [0,0,0,0]
         self.Monitor = None
+        self.__maxTempBuffer = 5000
+        self.__tempArray = np.zeros((2,self.__maxTempBuffer))
+        self.__fbg = FBGData()
         
         self.tempConnected = False
         
         self.measurementActive = False
+        self.startMeasurementTime = time()
         
         self.plotSpec = pl.Plot(self.channelList)
         self.plotTrace = tl.TracePlot()
@@ -115,12 +122,13 @@ class MainWindow(QtGui.QMainWindow):
         try:
             self.tc08usb = TC08USB(dll_path = dll_path)
             if self.tc08usb.open_unit():
+                self.initTempArray()
                 self.tc08usb.set_mains(50)
                 self.tc08usb.set_channel(1, USBTC08_TC_TYPE.K)
                 self.tempConnected = True
                 self.updateTempTimer = QtCore.QTimer()
                 self.updateTempTimer.timeout.connect(self.getTemp)
-                self.updateTempTimer.start(500)
+                self.updateTempTimer.start(1000)
             else:
                 self.tempConnected = False
                 self.connectTempAction.setChecked(False)
@@ -199,14 +207,14 @@ class MainWindow(QtGui.QMainWindow):
         self.minWlSpin.setDecimals(3)
         self.minWlSpin.setSuffix(' nm')
         self.minWlSpin.setRange(1460.0,1619.0)
-        self.minWlSpin.setValue(1540.0)
+        self.minWlSpin.setValue(1500.0)
         self.minWlSpin.valueChanged.connect(self.scaleInputSpectrum)
         
         self.maxWlSpin = QtGui.QDoubleSpinBox()
         self.maxWlSpin.setDecimals(3)
         self.maxWlSpin.setSuffix(' nm')
-        self.maxWlSpin.setRange(1469.0, 1620.0)
-        self.maxWlSpin.setValue(1570.0)
+        self.maxWlSpin.setRange(1461.0, 1620.0)
+        self.maxWlSpin.setValue(1600.0)
         self.maxWlSpin.valueChanged.connect(self.scaleInputSpectrum)
         l = QtGui.QHBoxLayout()
         l.addWidget(self.minWlSpin)
@@ -269,11 +277,24 @@ class MainWindow(QtGui.QMainWindow):
         temp = self.tc08usb[1]
         tempStr = "T=" + str("{0:.1f}".format(temp)) + u' \u00b0C'
         self.tempDisplay.setText(tempStr)
+        numVal = np.count_nonzero(self.__tempArray[0])
+        if numVal < self.__maxTempBuffer:
+            self.__tempArray[1][numVal] = temp
+            self.__tempArray[0][numVal] = time()#-self.startMeasurementTime
+        else:
+            self.__tempArray[1] = shift(self.__tempArray[1], -1, cval = temp)
+            self.__tempArray[0] = shift(self.__tempArray[0], -1, cval = time())#-self.startMeasurementTime)
+             
+        if numVal >1:
+            tempA = np.array(self.__tempArray[:,:numVal-1])
+            tempA[0] = tempA[0]-self.startMeasurementTime
+            self.plotTrace.plotTemp(tempA)
+        
+    def initTempArray(self):
+        self.__tempArray = np.zeros((2,self.__maxTempBuffer))
+        
     
     def readDataFromQ(self):
-        """
-        called by updateTimer
-        """
         qData = list(list(self.getAllFromQueue(self.dataQ)))
         timestamp = 0
         if len(qData) > 0:
@@ -281,6 +302,9 @@ class MainWindow(QtGui.QMainWindow):
             timestamp = qData[-1][1]
             d = d[:,self.__scalePos]
             self.plotSpec.plotS(self.__scaledWavelength, d)
+            if len(d[:,0]) == len(self.channelList):
+                self.__fbg.searchPeaks(self.__scaledWavelength, d,self.channelList, 
+                                       self.channelSelection, timestamp)
             
         dt = timestamp-self.lastTime
         if timestamp:
@@ -330,26 +354,22 @@ class MainWindow(QtGui.QMainWindow):
             self.plotSpec.setdBm(False)
             
     def startMeasurement(self):
-        #initialize Queues
-        self.dataQ = Queue.Queue()
-        self.errorQ = Queue.Queue()
-           
-        self.Monitor = mon.MonitorThread(self.dataQ, self.errorQ, self.si255, self.channelList)
+        #initialize Queue
+        self.dataQ = Queue.Queue(100)
+        self.initTempArray()
+        self.Monitor = mon.MonitorThread(self.dataQ, self.si255, self.channelList)
         self.Monitor.start()
         
-        self.lastTime = time.time()
+        self.startMeasurementTime = time()
+        self.lastTime = time()
         self.fps = None
-        #comError = self.getItemFromQueue(self.errorQ)
-        #if comError is not None:
-        #    QtGui.QMessageBox.critical(self,'iMon Connection Error',str(comError))
-        #    self.iMonMonitor = None
             
         self.measurementActive = True
         self.setActionState()
         
         #start updateMonitor Timer
         self.updateTimer = QtCore.QTimer()
-        self.updateTimer.timeout.connect(self.updateData)
+        self.updateTimer.timeout.connect(self.readDataFromQ)
         self.updateTimer.start(25)
         
                 
@@ -367,12 +387,8 @@ class MainWindow(QtGui.QMainWindow):
             self.connectTemp()
         else:
             self.disconnectTemp()
-            
-        
-    def updateData(self):
-        self.readDataFromQ() 
-       
-        
+    
+    
 class ChannelSelection(QtGui.QWidget):
     selectionChanged = QtCore.pyqtSignal()
     def __init__(self, parent=None):
@@ -415,6 +431,8 @@ class ChannelSelection(QtGui.QWidget):
             self.numPeaksLineArray[i].setEnabled(isChecked)
             if isChecked:
                 self.channelList.append(i+1)
+            else:
+                self.numPeaksLineArray[i].setText(str(0))
         self.selectionChanged.emit()
         
     def setNumPeaksCh(self, channel , numPeaks):
