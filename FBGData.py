@@ -43,36 +43,44 @@ class Channel():
         
         self.__maxPeaks = 30
         self.__maxBuffer = 5000
-        self.__numPeaks = 0
-        self.__traces = np.zeros((self.__maxPeaks+1,self.__maxBuffer))#col[0] timestamp        
+        self.__numTracePoints = 0
+        self.traces = np.zeros((self.__maxPeaks+1,self.__maxBuffer))#col[0] timestamp        
 
-    def getNumPeaks(self):
-        return self.__numPeaks        
         
     def setPeaks(self, timest, peakArray):
-        numVal = np.count_nonzero(self.__traces[0])
+        self.__numTracePoints = np.count_nonzero(self.traces[0])
         for i, val in enumerate(peakArray):
-            if numVal < self.__maxBuffer:
-                self.__traces[i+1][numVal] = val
-                self.__traces[0][numVal] = timest
+            if self.__numTracePoints < self.__maxBuffer:
+                self.traces[i+1][self.__numTracePoints] = val
+                self.traces[0][self.__numTracePoints] = timest
             else:
-                self.__traces[i+1] = shift(self.__traces[i+1], -1, cval = val)
-                self.__traces[0] = shift(self.__traces[0], -1, cval = timest)
-        print(numVal)
+                self.traces[i+1] = shift(self.traces[i+1], -1, cval = val)
+                self.traces[0] = shift(self.traces[0], -1, cval = timest)
+        #print(self.__numTracePoints)
         
+    def getTrace(self, numTrace):
+        x = self.traces[0,:self.__numTracePoints-1]
+        y = self.traces[numTrace+1,:self.__numTracePoints-1]
+        return x, y
+        
+    def getLastValues(self, numPeaks):
+        val = []
+        for i in range(numPeaks):
+            val.append(self.traces[i+1,-1])
+        return val
         
         
 class FBGData():
     def __init__(self):
         self.__numChannels = 4
-        self.__channels = []
+        self.channels = []
         
         self.deltaDBm = 10  #deta dBm to recognize peak
         self.threshold = 5 
         self.peakWindow = 2
         
         for i in range(self.__numChannels):
-            self.__channels.append(Channel())
+            self.channels.append(Channel())
         
     def centerOfGravity(self, x, y, pi, di):
         numVal = len(x)
@@ -135,11 +143,12 @@ class FBGData():
                 if numPeaks[i]:
                     pi = sorted(peakIndex)
                     cog = self.centerOfGravity(x,y[i],pi, deltaI)
-                    self.__channels[channelList[i]-1].setPeaks(timestamp, cog)
+                    self.channels[channelList[i]-1].setPeaks(timestamp, cog)
                 
                 #print(peakWl)
             if cs:
                 cs.setNumPeaksCh(channelList[i], numPeaks[i])
 
-        print(time()-st)       
+        #print(time()-st) 
+        return numPeaks
         

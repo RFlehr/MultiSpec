@@ -3,6 +3,8 @@
 Created on Tue Mar 01 10:36:45 2016
 
 @author: Flehr
+ToDo:
+    - port save data to fbgdata
 """
 
 __title__ =  'MultiSpec'
@@ -20,13 +22,14 @@ sys.path.append('../')
 from pyqtgraph.Qt import QtGui, QtCore
 import plot as pl
 import TracePlot as tl
-import Monitor as mon
+from Monitor import MonitorHyperionThread
 import hyperion, Queue, os
-from time import time
+from time import time, strftime
 from scipy.ndimage.interpolation import shift
 import numpy as np
 from tc08usb import TC08USB, USBTC08_TC_TYPE, USBTC08_ERROR#, USBTC08_UNITS
 from FBGData import FBGData
+from MyWidgets import ChannelSelection, FreqSpin
 
 class MainWindow(QtGui.QMainWindow):
     def __init__(self, parent=None):
@@ -42,9 +45,12 @@ class MainWindow(QtGui.QMainWindow):
         self.peakList = []
         self.__numPeaksArray = [0,0,0,0]
         self.Monitor = None
+        self.__freq = 1 #hyperion Spectrum Divider
         self.__maxTempBuffer = 5000
         self.__tempArray = np.zeros((2,self.__maxTempBuffer))
         self.__fbg = FBGData()
+        self.logFileName = ''
+        self.logFile = None #log-file handle
         
         self.tempConnected = False
         
@@ -144,6 +150,7 @@ class MainWindow(QtGui.QMainWindow):
         self.tc08usb.close_unit()
         self.tc08usb = None
         self.tempConnected = False
+        self.__tempArray = None
             
     def createAction(self, text, slot=None, shortcut=None,
                      icon=None,tip=None,checkable=False,
@@ -181,7 +188,7 @@ class MainWindow(QtGui.QMainWindow):
         self.startAction = self.createAction('St&art', slot=self.startMeasurement, shortcut='Ctrl+M',
                                              tip='Messung starten', icon='Button Play')
         
-        self.recordAction = self.createAction('Aufnahme', tip='Aufnahme starten', icon='Button Record Red')
+        self.recordAction = self.createAction('Aufnahme', tip='Aufnahme starten', checkable = True, icon='Button Record Red')
         
         self.stopAction = self.createAction('St&op', slot=self.stopMeasurement, shortcut='Ctrl+T',
                                         tip='Messung beenden', icon='Button Stop')
@@ -191,14 +198,21 @@ class MainWindow(QtGui.QMainWindow):
         self.channelSelection.selectionChanged.connect(self.setChannels)
         self.selectChannelAction = QtGui.QWidgetAction(self)
         self.selectChannelAction.setDefaultWidget(self.channelSelection)
+        self.freqSpin = FreqSpin()
+        self.freqSpin.valueChanged.connect(self.test)
+        self.freqSpinAction = QtGui.QWidgetAction(self)
+        self.freqSpinAction.setDefaultWidget(self.freqSpin)
         self.toggledBmAction = self.createToggledBm()
         self.scaleAction = self.createScalePlotAction()
         self.tempAction = self.createTempDisplay()
         
         self.toolbar = self.addToolBar('Measurement')
         self.addActions(self.toolbar, (self.connectAction, self.connectThermoAction, None, self.startAction, self.recordAction, self.stopAction,
-                                      None,self.selectChannelAction,None,self.tempAction,None,self.toggledBmAction,
+                                      None,self.selectChannelAction,None,self.tempAction,None,self.freqSpinAction,self.toggledBmAction,
                                       self.scaleAction))
+    
+    def test(self,val):
+        print(val)
         
     def createScalePlotAction(self):
         wa = QtGui.QWidgetAction(self)
@@ -288,7 +302,8 @@ class MainWindow(QtGui.QMainWindow):
         if numVal >1:
             tempA = np.array(self.__tempArray[:,:numVal-1])
             tempA[0] = tempA[0]-self.startMeasurementTime
-            self.plotTrace.plotTemp(tempA)
+            if self.plotTab.currentIndex() == 1:
+                self.plotTrace.plotTemp(tempA)
         
     def initTempArray(self):
         self.__tempArray = np.zeros((2,self.__maxTempBuffer))
@@ -297,25 +312,29 @@ class MainWindow(QtGui.QMainWindow):
     def readDataFromQ(self):
         qData = list(list(self.getAllFromQueue(self.dataQ)))
         timestamp = 0
+        d = None
         if len(qData) > 0:
             d = np.array(qData[-1][0])
             timestamp = qData[-1][1]
             d = d[:,self.__scalePos]
-            self.plotSpec.plotS(self.__scaledWavelength, d)
-            if len(d[:,0]) == len(self.channelList):
-                self.__fbg.searchPeaks(self.__scaledWavelength, d,self.channelList, 
-                                       self.channelSelection, timestamp)
+            return d, timestamp , 1
+        else:
+            return 0,0,0       
             
-        dt = timestamp-self.lastTime
-        if timestamp:
-            if self.fps is None:
-                self.fps = 1.0/dt
-            else:
-                s = np.clip(dt*3., 0, 1)
-                self.fps = self.fps * (1-s) + (1.0/dt) * s
-            self.statusBar().showMessage('%0.2f Hz' % (self.fps))
-            self.lastTime = timestamp
-    
+    def saveLastData(self, timestamp, numPeaks):
+        if self.logFile:
+            print('save Data')
+            temp = self.tempDisplay.text()
+            temp = temp.split(' ')
+            _str = str(timestamp) + '\t' + str(temp[0]) + '\t'
+            for i, chan in enumerate(self.channelList):
+                peaks = self.__fbg.channels[chan-1].getLastValues(numPeaks[i])
+                for val in peaks:
+                    _str += str("{0:.3f}".format(val)) + '\t'
+            _str = '\n'
+            print(_str)
+            self.logFile.write(_str)
+            
     def scaleInputSpectrum(self):
         _min = float(self.minWlSpin.value())
         _max = float(self.maxWlSpin.value())
@@ -354,13 +373,24 @@ class MainWindow(QtGui.QMainWindow):
             self.plotSpec.setdBm(False)
             
     def startMeasurement(self):
+        self.__fbg = FBGData()
+        self.logFileName = strftime('%Y%m%d_%H%M%S') + '.log'
+        self.logFile = open(self.logFileName,'w')
+        self.plotTrace.initTraces([0,],0)
+        self.__freq = self.freqSpin.value()
+        self.updateTimer = QtCore.QTimer()
+        self.updateTimer.timeout.connect(self.updateData)
+        
         #initialize Queue
         self.dataQ = Queue.Queue(100)
         self.initTempArray()
-        self.Monitor = mon.MonitorThread(self.dataQ, self.si255, self.channelList)
+        self.Monitor = MonitorHyperionThread(self.dataQ, self.si255, 
+                                         self.channelList, specDevider=self.__freq)
         self.Monitor.start()
-        
+        self.updateTimer.setInterval(25*self.__freq)
+            
         self.startMeasurementTime = time()
+        self.initTempArray()
         self.lastTime = time()
         self.fps = None
             
@@ -368,19 +398,19 @@ class MainWindow(QtGui.QMainWindow):
         self.setActionState()
         
         #start updateMonitor Timer
-        self.updateTimer = QtCore.QTimer()
-        self.updateTimer.timeout.connect(self.readDataFromQ)
-        self.updateTimer.start(25)
+        self.updateTimer.start()
         
                 
     def stopMeasurement(self):
-        self.Monitor.join(0.1)
+        if self.__freq <10:
+            self.Monitor.join(0.1)
+            self.Monitor = None
+            self.si255.disable_spectrum_streaming()
+        
         self.measurementActive = False
         self.updateTimer.stop()
-        self.Monitor = None
-        self.si255.disable_spectrum_streaming()
-        
         self.setActionState()
+        self.logFile.close()
         
     def toggleThermo(self):
         if self.connectThermoAction.isChecked():
@@ -388,60 +418,30 @@ class MainWindow(QtGui.QMainWindow):
         else:
             self.disconnectTemp()
     
-    
-class ChannelSelection(QtGui.QWidget):
-    selectionChanged = QtCore.pyqtSignal()
-    def __init__(self, parent=None):
-        QtGui.QWidget.__init__(self, parent)
-        
-        self.channelList = []
-        colorArray = ["color: blue", "color: red", "color: green", "color: black"]
-        
-        lay = QtGui.QGridLayout(self)
-        lay.addWidget(QtGui.QLabel(text='Channel: '),0,0)
-        lay.addWidget(QtGui.QLabel(text='Peaks: '),1,0)
-        self.checkArray = []
-        self.numPeaksLineArray = []
-        for i in range(4):
-            label = 'Ch' + str(i+1)
-            l = QtGui.QLabel(text=label)
-            l.setStyleSheet(colorArray[i])
-            c = QtGui.QCheckBox()
-            c.stateChanged.connect(self.updateChannelList)
-            c.setStyleSheet(colorArray[i])
-            self.checkArray.append(c)
-            ed = QtGui.QLineEdit()
-            ed.setReadOnly(True)
-            ed.setAlignment(QtCore.Qt.AlignCenter)
-            ed.setText('0')
-            ed.setMaximumWidth(30)
-            self.numPeaksLineArray.append(ed)
-            lay.addWidget(l,0,2*i+1)
-            lay.addWidget(c,0,2*i+2)
-            lay.addWidget(ed,1,2*i+1,1,2)
-        self.checkArray[0].setChecked(True)
-        
-    def getChannelList(self):
-        return self.channelList
-        
-    def updateChannelList(self):
-        self.channelList = []
-        for i in range(4):
-            isChecked = self.checkArray[i].isChecked()
-            self.numPeaksLineArray[i].setEnabled(isChecked)
-            if isChecked:
-                self.channelList.append(i+1)
-            else:
-                self.numPeaksLineArray[i].setText(str(0))
-        self.selectionChanged.emit()
-        
-    def setNumPeaksCh(self, channel , numPeaks):
-        self.numPeaksLineArray[channel-1].setText(str(numPeaks))
-    
-    def setNumPeaks(self, numPeaksArray):
-        np = numPeaksArray
-        for i, num in enumerate(np):
-            self.numPeaksLineArray[i].setText(str(num))
+    def updateData(self):
+        numPeaks = 0
+        data = np.zeros((1,1))
+        data, timestamp, success  = self.readDataFromQ()
+        actualTime = timestamp-self.startMeasurementTime
+        if not success: return
+        if len(data[:,0]) == len(self.channelList):
+            numPeaks = self.__fbg.searchPeaks(self.__scaledWavelength, data,self.channelList, 
+                                       self.channelSelection, actualTime)
+        #print('Anzahl Peaks total :', sum(numPeaks))
+        if self.plotTab.currentIndex() == 0:
+            self.plotSpec.plotS(self.__scaledWavelength, data)
+        else:
+            self.plotTrace.plotTraces(self.channelList, numPeaks, self.__fbg)
+            
+        if self.recordAction.isChecked() and self.__freq >= 10:
+            self.saveLastData(actualTime, numPeaks)
 
-        
-        
+        dt = timestamp-self.lastTime
+        if timestamp:
+            if self.fps is None:
+                self.fps = 1.0/dt
+            else:
+                s = np.clip(dt*3., 0, 1)
+                self.fps = self.fps * (1-s) + (1.0/dt) * s
+            self.statusBar().showMessage('%0.2f Hz' % (self.fps))
+            self.lastTime = timestamp

@@ -26,7 +26,7 @@ class TracePlot(QtGui.QWidget):
         self.lineWidth = 0
         self.backColor = QtGui.QColor(255,255,255)
         self.__plot = self.createPlot()
-        self.initTraces()
+        #self.initTraces()
         
         lay = QtGui.QVBoxLayout(self)
         lay.addWidget(self.__plot)
@@ -65,17 +65,24 @@ class TracePlot(QtGui.QWidget):
         
         return w
         
-    def initTraces(self):
-        self.__plot.__traces = []
+    def initTraces(self, numPeaks, sumPeaks):
+        print('Init Traces')
+        self.__traces = []
         self.__plot.clear()
-        self.pt = pg.PlotCurveItem(pen=QtGui.QPen(self.colArray[0],self.lineWidth))
-        self.__plot.addItem(self.pt)
-        self.__tempTrace = pg.PlotCurveItem(pen=QtGui.QPen(self.colArray[1],0))
+        numTraces = sumPeaks
+        n=0
+        for i, numP in enumerate(numPeaks):
+            for j in range(numP):
+                pt = pg.PlotCurveItem(pen=(n, numTraces))
+                self.__plot.addItem(pt)
+                self.__traces.append(pt)
+                n+=1
+        self.__tempTrace = pg.PlotCurveItem(pen=QtGui.QPen(self.colArray[3],0))
         self.aR.addItem(self.__tempTrace)
         
     def setChannelList(self, chList):
         self.__channelList = chList
-        self.initTraces() 
+        
         
     def showTemp(self, state):
         if state:
@@ -86,9 +93,21 @@ class TracePlot(QtGui.QWidget):
     def plotTemp(self,tempArray):
         t = tempArray
         self.__tempTrace.setData(t[0],t[1]) 
-        self.__plot.setXRange(np.min(t[0]),np.max(t[0]))
-        #print(t[0])
-        #self.pt.setData(t[0],t[1]) 
+        
+        
+    def plotTraces(self, numChannels, numPeaks, _fbg):
+        numTraces = len(self.__traces)
+        sumPeaks = sum(numPeaks)
+        if numTraces != sumPeaks:
+            self.initTraces(numPeaks, sumPeaks)
+        n=0
+        for i, numP in enumerate(numPeaks):
+            #print(numP)
+            for j in range(numP):
+             #   
+                x,y = _fbg.channels[numChannels[i]-1].getTrace(j)
+                self.__traces[n].setData(x,y)
+                n+=1
         
     def updateViews(self):
         self.aR.setGeometry(self.__plot.getViewBox().sceneBoundingRect())
