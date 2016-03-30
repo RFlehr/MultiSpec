@@ -56,7 +56,7 @@ class MonitorHyperionThread(threading.Thread):
 
 
 class MonitorTC08USBThread(threading.Thread):
-    def __init__(self, dataQ, device):
+    def __init__(self, device, dataQ):
         threading.Thread.__init__(self)
         
         self.dataQ = dataQ
@@ -71,6 +71,10 @@ class MonitorTC08USBThread(threading.Thread):
         threading.Thread.join(self, timeout) 
         
     def run(self):
-        pass
+        while self.alive.isSet():
+            self.tc08.get_single()
+            temp = self.tc08[1]
+            self.dataQ.put(temp)
+            
         
         

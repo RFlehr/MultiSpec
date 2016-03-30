@@ -2,6 +2,9 @@
 """
 Created on Mon Mar 14 18:12:30 2016
 
+ToDo:
+    - add Legend
+
 @author: Roman
 """
 
@@ -35,7 +38,9 @@ class TracePlot(QtGui.QWidget):
         self.updateViews()
         self.__plot.getViewBox().sigResized.connect(self.updateViews)
         
-        
+    def clearPlot(self):
+        self.__plot.clear()
+        self.aR.clear()
      
     def createPlot(self):
         t = pg.PlotWidget()
@@ -48,6 +53,7 @@ class TracePlot(QtGui.QWidget):
         t.getAxis('right').linkToView(self.aR)
         self.aR.setXLink(t)
         t.getAxis('right').setLabel(u'Temperatur [\u00b0C]')
+        self.legend = t.addLegend()
         return t
      
     def createPlotOptions(self):
@@ -69,16 +75,22 @@ class TracePlot(QtGui.QWidget):
         print('Init Traces')
         self.__traces = []
         self.__plot.clear()
+        self.aR.clear()
+        self.__plot.plotItem.legend.items = []
         numTraces = sumPeaks
         n=0
         for i, numP in enumerate(numPeaks):
+            label = 'Ch' + str(self.__channelList[i])
             for j in range(numP):
+                lab = label + ' Peak' + str(j+1)
                 pt = pg.PlotCurveItem(pen=(n, numTraces))
                 self.__plot.addItem(pt)
                 self.__traces.append(pt)
+                self.legend.addItem(pt, lab)
                 n+=1
         self.__tempTrace = pg.PlotCurveItem(pen=QtGui.QPen(self.colArray[3],0))
         self.aR.addItem(self.__tempTrace)
+        self.legend.addItem(self.__tempTrace, 'Temperatur')
         
     def setChannelList(self, chList):
         self.__channelList = chList
@@ -92,7 +104,8 @@ class TracePlot(QtGui.QWidget):
         
     def plotTemp(self,tempArray):
         t = tempArray
-        self.__tempTrace.setData(t[0],t[1]) 
+        x, l = self.setTimeLabel(t[0])
+        self.__tempTrace.setData(x,t[1]) 
         
         
     def plotTraces(self, numChannels, numPeaks, _fbg):
@@ -103,11 +116,29 @@ class TracePlot(QtGui.QWidget):
         n=0
         for i, numP in enumerate(numPeaks):
             #print(numP)
+            x = _fbg.channels[numChannels[i]-1].getTimeTrace()
+            if len(x) > 1:
+                _x, label = self.setTimeLabel(x)
+                label = 'Zeit [' + label + ']'
+                self.__plot.setLabel('bottom',label)
             for j in range(numP):
-             #   
-                x,y = _fbg.channels[numChannels[i]-1].getTrace(j)
-                self.__traces[n].setData(x,y)
+                y = _fbg.channels[numChannels[i]-1].getTrace(j)
+                self.__traces[n].setData(_x,y)
                 n+=1
+        
+                
+    def setTimeLabel(self, timearray):
+        #time in sec
+        label = 's'
+        times = timearray
+        lasttime = times[-1]
+        if lasttime <= 180:
+            label = 's'
+        else:
+            label = 'min'
+            times = times/60.
+        
+        return times, label
         
     def updateViews(self):
         self.aR.setGeometry(self.__plot.getViewBox().sceneBoundingRect())
