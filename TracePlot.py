@@ -89,8 +89,11 @@ class TracePlot(QtGui.QWidget):
                 self.legend.addItem(pt, lab)
                 n+=1
         self.__tempTrace = pg.PlotCurveItem(pen=QtGui.QPen(self.colArray[3],0))
+        self.__tempTrace1 = pg.PlotCurveItem(pen=QtGui.QPen(self.colArray[3],0))
         self.aR.addItem(self.__tempTrace)
-        self.legend.addItem(self.__tempTrace, 'Temperatur')
+        self.aR.addItem(self.__tempTrace1)
+        self.legend.addItem(self.__tempTrace, 'Temperatur1')
+        self.legend.addItem(self.__tempTrace1, 'Temperatur2')
         
     def setChannelList(self, chList):
         self.__channelList = chList
@@ -106,6 +109,8 @@ class TracePlot(QtGui.QWidget):
         t = tempArray
         x, l = self.setTimeLabel(t[0])
         self.__tempTrace.setData(x,t[1]) 
+        self.__tempTrace1.setData(x,t[2])
+        #print(t[2,-1])
         
         
     def plotTraces(self, numChannels, numPeaks, _fbg):
@@ -121,10 +126,11 @@ class TracePlot(QtGui.QWidget):
                 _x, label = self.setTimeLabel(x)
                 label = 'Zeit [' + label + ']'
                 self.__plot.setLabel('bottom',label)
-            for j in range(numP):
-                y = _fbg.channels[numChannels[i]-1].getTrace(j)
-                self.__traces[n].setData(_x,y)
-                n+=1
+                for j in range(numP):
+                    y = _fbg.channels[numChannels[i]-1].getTrace(j)
+                    self.__traces[n].setData(_x,y)
+                    n+=1
+            
         
                 
     def setTimeLabel(self, timearray):
@@ -134,9 +140,12 @@ class TracePlot(QtGui.QWidget):
         lasttime = times[-1]
         if lasttime <= 180:
             label = 's'
-        else:
+        elif lasttime <= 18000:
             label = 'min'
             times = times/60.
+        else:
+            label = 'h'
+            times = times/3600.
         
         return times, label
         

@@ -8,68 +8,66 @@ ToDo:
 """
 import numpy as np
 from scipy.ndimage.interpolation import shift
-from lmfit.models import GaussianModel, LorentzianModel, LinearModel, VoigtModel, PseudoVoigtModel
+from lmfit.models import GaussianModel
 import time
 
-
-class PeakData():
-    def __init__(self, center):
-        self.__center = center
-        self.__fwhw = 0.0
-        self.__amplitude = 0.0
-        
-    def Center(self):
-        return self.__center
-
-    def FWHM(self):
-        if self.__fwhw:
-            return self.__fwhw
-
-    def Amp(self):
-        if self.__amplitude:
-            return self.__amplitude    
-        
-    def setAmp(self, amp):
-        self.__amplitude = amp
-        
-    def setFWHM(self, fwhm):
-        self.__fwhw = fwhm
-
-    def setTime(self, time):
-        self.__timestamp = time
-        
 class Channel():
     def __init__(self):
         
         self.__maxPeaks = 30
         self.__maxBuffer = 5000
         self.__numTracePoints = 0
-        self.traces = np.zeros((self.__maxPeaks+1,self.__maxBuffer))#col[0] timestamp        
+        self.traces = np.zeros((self.__maxPeaks,self.__maxBuffer), dtype={'names':['time', 'cen', 'max', 'fwhm', 'amp'], 'formats':['f4','f4','f4','f4','f4']})#col[0] timestamp 
+        self.num = -1
 
         
-    def setPeaks(self, timest, peakArray):
+    def setPeaks(self, timest, peakArray, maxArray, fwhmArray = None, ampArray = None):
         self.__numTracePoints = np.count_nonzero(self.traces[0])
         for i, val in enumerate(peakArray):
             if self.__numTracePoints < self.__maxBuffer:
-                self.traces[i+1][self.__numTracePoints] = val
-                self.traces[0][self.__numTracePoints] = timest
+                self.traces[i][self.__numTracePoints]['cen'] = val
+                self.traces[i][self.__numTracePoints]['max'] = maxArray[i]
+                self.traces[i][self.__numTracePoints]['time'] = timest
+                if fwhmArray:
+                    self.traces[i][self.__numTracePoints]['fwhm'] = fwhmArray[i]
+                if ampArray:
+                    self.traces[i][self.__numTracePoints]['amp'] = ampArray[i]
             else:
-                self.traces[i+1] = shift(self.traces[i+1], -1, cval = val)
-                self.traces[0] = shift(self.traces[0], -1, cval = timest)
-        #print(self.__numTracePoints)
-                
+                self.traces[i] = np.roll(self.traces[i], -1)
+                self.traces[i][-1]['cen'] = val
+                self.traces[i][-1]['max'] = maxArray[i]
+                self.traces[i][-1]['time'] = timest
+                if fwhmArray:
+                    self.traces[i][-1]['fwhm'] = fwhmArray[i]
+                if ampArray:
+                    self.traces[i][-1]['amp'] = ampArray[i]
+  
     def getTimeTrace(self):
-        return self.traces[0,:self.__numTracePoints]
+        return self.traces[0,:self.__numTracePoints]['time']
         
     def getTrace(self, numTrace):
-        y = self.traces[numTrace+1,:self.__numTracePoints]
+        y = self.traces[numTrace,:self.__numTracePoints]['cen']
         return y
         
     def getLastValues(self, numPeaks):
-        val = []
-        for i in range(numPeaks):
-            val.append(self.traces[i+1,self.__numTracePoints])
-        return val
+        val = []; fwhm = []; amp = []; _max = []
+        t = 0.; f = 0.; a = 0.; 
+        if self.__numTracePoints:
+            point = self.__numTracePoints-1
+            for i in range(numPeaks):
+                #print(self.traces[i,self.__numTracePoints])
+                val.append(self.traces[i,point]['cen'])
+                _max.append(self.traces[i,point]['max'])
+                t = self.traces[i][point]['time']
+                f = self.traces[i][point]['fwhm']
+                if f: fwhm.append(f)
+                a = self.traces[i][point]['amp']
+                if a: amp.append(a)
+       
+        #print(t,val,fwhm,amp)
+        return t, val, _max, fwhm, amp
+        
+
         
         
 class FBGData():
@@ -100,59 +98,33 @@ class FBGData():
             cog.append((cx*cy).sum()/cy.sum())
         return cog
         
-    def peakFit(self, x, y, model = 'gau', pi = None):
+    def peakFit(self, x, y, model = 'gau', pi = None, di = None):
         ti = time.time()
         if pi:
             NumPeaks = len(pi)
             center = []
-            fitFuncs = {'gau':GaussianModel, 
-                        'lor':LorentzianModel,
-                        'voi':VoigtModel, 
-                        'psv':PseudoVoigtModel}
-            
-            paramStr = ['center','sigma','amplitude']
-            
-            _y = np.power(10,y/10) #np.array(y)- np.min(y)
-            
-            if NumPeaks > 0:
-                peakFuncs = []
-                
+            fwhm = []
+            amp = []
+            numVal = len(x)
             for i in range(NumPeaks):
-                prefix_str = 'P' + str(i+1) + '_'
-                #print('i: ',i)
-                peakFuncs.append(fitFuncs[model](prefix=prefix_str))
-                if i == 0:            
-                    pars = peakFuncs[i].make_params()
-                else:
-                    pars.update(peakFuncs[i].make_params())
-                    
-                pars[str(prefix_str + paramStr[0])].set(x[pi[i]])#, min=peak_wl[i]-1.0, max=peak_wl[i]+1.0)
-                pars[str(prefix_str + paramStr[1])].set(.1, max=1.0)
-                pars[str(prefix_str + paramStr[2])].set(_y[pi[i]], min=0)
+                pImin = pi[i]-di
+                if pImin < 0:
+                    pImin = 0
+                pImax = pi[i] + di
+                if pImax > (numVal-1):
+                    pImax = numVal-1
+                __y = y[pImin:pImax]
+                __x = x[pImin:pImax]
                 
-                if i == 0:            
-                    mod = peakFuncs[i]
-                else:
-                   mod += peakFuncs[i] 
-                       
-            lin_mod = LinearModel()
-            pars.update(lin_mod.make_params())
-            pars['slope'].set(0.0)
-            pars['intercept'].set(0.0)
-            
-            #mod += lin_mod
-            out = mod.fit(_y, pars, x=x)
-            #self.Spec[index].yfit = out.best_fit
-            self.facFWHM = {'gau':2.3548, 'lor': 2.0, 'voi':3.6013,'psv':2.1774}
-                        
-            for i in range(NumPeaks):
-                prefix_str = 'P' + str(i+1) + '_'
-                center.append(out.best_values[str(prefix_str + paramStr[0])])
-                #print('Center: ', out.best_values[str(prefix_str + paramStr[0])])
-            #print(index,self.Spec[index].name)        
-            #print(out.fit_report(min_correl=0.5))
-            print 'fit :', time.time()-ti
-            return center
+                __y = np.power(10,__y/10) #np.array(y)- np.min(y)
+                mod = GaussianModel()
+                pars = mod.guess(__y, x=__x)
+                out  = mod.fit(__y, pars, x=__x)
+                center.append(out.best_values['center'])
+                fwhm.append(out.best_values['sigma']*2.3548)
+                amp.append(out.best_values['amplitude'])
+            #print 'fit:', time.time()-ti
+            return center, fwhm ,amp
     
     def searchPeaks(self, x, y, channelList, cs = None, timestamp = 0, peakfit = 0):
         x=np.array(x)
@@ -198,12 +170,11 @@ class FBGData():
                     pi = sorted(peakIndex)
                     if not peakfit:
                         peaks = self.centerOfGravity(x,y[i],pi, deltaI)
+                        self.channels[channelList[i]-1].setPeaks(timestamp, peaks, peakVal)
                     else:
-                        peaks = self.peakFit(x, y[i], pi= pi)
+                        peaks, fwhm, amp = self.peakFit(x, y[i], pi= pi, di=deltaI)
+                        self.channels[channelList[i]-1].setPeaks(timestamp, peaks, peakVal, fwhm, amp)
                         
-                    self.channels[channelList[i]-1].setPeaks(timestamp, peaks)
-                
-                #print(peakWl)
             if cs:
                 cs.setNumPeaksCh(channelList[i], numPeaks[i])
 

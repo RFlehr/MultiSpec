@@ -65,6 +65,7 @@ class MonitorTC08USBThread(threading.Thread):
         self.tc08 = device
         self.tc08.set_mains(50)
         self.tc08.set_channel(1, USBTC08_TC_TYPE.K)
+        self.tc08.set_channel(2, USBTC08_TC_TYPE.K)
         
     def join(self, timeout = None):
         self.alive.clear()
@@ -74,7 +75,9 @@ class MonitorTC08USBThread(threading.Thread):
         while self.alive.isSet():
             self.tc08.get_single()
             temp = self.tc08[1]
-            self.dataQ.put(temp)
+            temp2 = self.tc08[2]
+            #print(temp, temp2)
+            self.dataQ.put((temp, temp2))
             
         
         
