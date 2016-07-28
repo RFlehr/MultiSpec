@@ -76,7 +76,7 @@ class FBGData():
         self.channels = []
         
         self.deltaDBm = 10  #delta dBm to recognize peak
-        self.threshold = 5 
+        self.threshold = -20. 
         self.peakWindow = 2
         
         for i in range(self.__numChannels):
@@ -140,16 +140,18 @@ class FBGData():
                 print(e)
             ymin = np.min(_y)
             ymax = np.max(_y)
+            
             if ymax - ymin < self.deltaDBm:
                 numPeaks.append(0)
             else:
-                thres = ymax-self.threshold
+                thres = ymin - self.threshold
                 peakIndex = []; peakVal = []
                 aboveThres = True
                 n = 0
                 while aboveThres and n<30:
                     n += 1
                     ymax = np.max(_y)
+                    print(ymax, thres)
                     if ymax > thres:
                         peakVal.append(float(ymax))
                         pI = np.argmax(_y)
