@@ -9,10 +9,10 @@ ToDo:
 
 __title__ =  'MultiSpec'
 __about__ = """Hyperion si255 Interrogation Software
-            including Pico Temprature measurements
+            including PicoLog Temprature measurements
             """
-__version__ = '0.1.2'
-__date__ = '16.03.2016'
+__version__ = '0.1.3'
+__date__ = '22.03.2016'
 __author__ = 'Roman Flehr'
 __cp__ = u'\u00a9 2016 Loptek GmbH & Co. KG'
 
@@ -22,14 +22,15 @@ sys.path.append('../')
 from pyqtgraph.Qt import QtGui, QtCore
 import plot as pl
 import TracePlot as tl
-from Monitor import MonitorHyperionThread
+from Monitor import MonitorHyperionThread, MonitorTC08USBThread
 import hyperion, Queue, os
 from time import time, strftime
 from scipy.ndimage.interpolation import shift
+from scipy.stats import linregress
 import numpy as np
-from tc08usb import TC08USB, USBTC08_TC_TYPE, USBTC08_ERROR#, USBTC08_UNITS
+from tc08usb import TC08USB, USBTC08_ERROR
 from FBGData import FBGData
-from MyWidgets import ChannelSelection, FreqSpin
+from MyWidgets import ChannelSelection, FreqSpinAction
 
 class MainWindow(QtGui.QMainWindow):
     def __init__(self, parent=None):
@@ -48,9 +49,9 @@ class MainWindow(QtGui.QMainWindow):
         self.__freq = 1 #hyperion Spectrum Divider
         self.__maxTempBuffer = 5000
         self.__tempArray = np.zeros((2,self.__maxTempBuffer))
+        self.tempGradientInterval = 60 # in sec
         self.__fbg = FBGData()
-        self.logFileName = ''
-        self.logFile = None #log-file handle
+        self.logFile = []#None #log-file handle
         
         self.tempConnected = False
         
@@ -85,15 +86,44 @@ class MainWindow(QtGui.QMainWindow):
                 target.addSeparator()
             else:
                 target.addAction(action)
-
+                
+    def calcTempGradient(self, numVal):
+        dTime = self.__tempArray[0,numVal-1] - self.__tempArray[0,0]
+        intv = self.tempGradientInterval
+        if dTime >= intv:
+            _min = self.__tempArray[0,numVal-1]-intv
+            pos = np.where(self.__tempArray[0,:] >= _min)[0]
+            slope = linregress(self.__tempArray[0,pos], self.__tempArray[1,pos])
+            slope1 = linregress(self.__tempArray[0,pos], self.__tempArray[2,pos])
+            #print (slope[0], '\n',slope1[0])
+            _str = str("{0:.3f}".format(slope[0]*60))
+            self.tempGrad.setText(_str)
+            _str = str("{0:.3f}".format(slope1[0]*60))
+            self.tempGrad1.setText(_str)
+        #print(timestep)
+        
+        
     def closeEvent(self, event):
         reply = QtGui.QMessageBox.question(self, 'Message',
             "Are you sure to quit?", QtGui.QMessageBox.Yes, QtGui.QMessageBox.No)
 
         if reply == QtGui.QMessageBox.Yes:
             try:
+                if self.recordAction.isChecked():
+                    self.recordAction.setChecked(False)
+                if self.measurementActive:
+                    self.stopMeasurement()
+                if self.Monitor:
+                    if self.Monitor.alive.isSet():
+                        self.Monitor.join()
+                        self.Monitor = None
                 if self.si255.comm.connected:
                     self.si255.comm.close()
+                
+                if self.tempMon:
+                    if self.tempMon.alive.isSet():
+                        self.tempMon.join()
+                        self.temMon = None
                 if self.tempConnected:
                     self.tc08usb.close_unit()
             except:
@@ -121,6 +151,7 @@ class MainWindow(QtGui.QMainWindow):
             self.isConnected=False
             QtGui.QMessageBox.critical(self,'Connection Error',
                                        'Could not connect to Spectrometer. Please try again')
+            self.connectAction.setChecked(False)
         self.setActionState()
         
     def connectTemp(self):
@@ -129,15 +160,16 @@ class MainWindow(QtGui.QMainWindow):
             self.tc08usb = TC08USB(dll_path = dll_path)
             if self.tc08usb.open_unit():
                 self.initTempArray()
-                self.tc08usb.set_mains(50)
-                self.tc08usb.set_channel(1, USBTC08_TC_TYPE.K)
+                self.tempQ = Queue.Queue(100)
                 self.tempConnected = True
+                self.tempMon = MonitorTC08USBThread(self.tc08usb, self.tempQ)
+                self.tempMon.start()
                 self.updateTempTimer = QtCore.QTimer()
                 self.updateTempTimer.timeout.connect(self.getTemp)
-                self.updateTempTimer.start(1000)
+                self.updateTempTimer.start(100)
             else:
                 self.tempConnected = False
-                self.connectTempAction.setChecked(False)
+                self.connectThermoAction.setChecked(False)
                 QtGui.QMessageBox.critical(self,'Connection Error',
                                        'Could not connect to TC08-USB. Please try again')
                 
@@ -147,10 +179,16 @@ class MainWindow(QtGui.QMainWindow):
     def disconnectTemp(self):
         if self.updateTempTimer.isActive():
             self.updateTempTimer.stop()
+        if self.tempMon:
+            if self.tempMon.alive.isSet():
+                self.tempMon.join()
+        self.tempMon = None
         self.tc08usb.close_unit()
         self.tc08usb = None
         self.tempConnected = False
         self.__tempArray = None
+        self.tempDisplay.setText(' --.-')
+        self.tempDisplay1.setText(' --.-')
             
     def createAction(self, text, slot=None, shortcut=None,
                      icon=None,tip=None,checkable=False,
@@ -188,7 +226,7 @@ class MainWindow(QtGui.QMainWindow):
         self.startAction = self.createAction('St&art', slot=self.startMeasurement, shortcut='Ctrl+M',
                                              tip='Messung starten', icon='Button Play')
         
-        self.recordAction = self.createAction('Aufnahme', tip='Aufnahme starten', checkable = True, icon='Button Record Red')
+        self.recordAction = self.createAction('Aufnahme', tip='Aufnahme starten',slot=self.startStopRecord, checkable = True, icon='Button Record Red')
         
         self.stopAction = self.createAction('St&op', slot=self.stopMeasurement, shortcut='Ctrl+T',
                                         tip='Messung beenden', icon='Button Stop')
@@ -198,22 +236,16 @@ class MainWindow(QtGui.QMainWindow):
         self.channelSelection.selectionChanged.connect(self.setChannels)
         self.selectChannelAction = QtGui.QWidgetAction(self)
         self.selectChannelAction.setDefaultWidget(self.channelSelection)
-        self.freqSpin = FreqSpin()
-        self.freqSpin.valueChanged.connect(self.test)
-        self.freqSpinAction = QtGui.QWidgetAction(self)
-        self.freqSpinAction.setDefaultWidget(self.freqSpin)
+        self.setFreqAction = FreqSpinAction()
         self.toggledBmAction = self.createToggledBm()
         self.scaleAction = self.createScalePlotAction()
         self.tempAction = self.createTempDisplay()
         
         self.toolbar = self.addToolBar('Measurement')
         self.addActions(self.toolbar, (self.connectAction, self.connectThermoAction, None, self.startAction, self.recordAction, self.stopAction,
-                                      None,self.selectChannelAction,None,self.tempAction,None,self.freqSpinAction,self.toggledBmAction,
+                                      None,self.selectChannelAction,None,self.tempAction,None, self.setFreqAction,self.toggledBmAction,
                                       self.scaleAction))
     
-    def test(self,val):
-        print(val)
-        
     def createScalePlotAction(self):
         wa = QtGui.QWidgetAction(self)
         
@@ -228,7 +260,7 @@ class MainWindow(QtGui.QMainWindow):
         self.maxWlSpin.setDecimals(3)
         self.maxWlSpin.setSuffix(' nm')
         self.maxWlSpin.setRange(1461.0, 1620.0)
-        self.maxWlSpin.setValue(1600.0)
+        self.maxWlSpin.setValue(1620.0)
         self.maxWlSpin.valueChanged.connect(self.scaleInputSpectrum)
         l = QtGui.QHBoxLayout()
         l.addWidget(self.minWlSpin)
@@ -243,17 +275,32 @@ class MainWindow(QtGui.QMainWindow):
         
     def createTempDisplay(self):
         a = QtGui.QWidgetAction(self)
+        t = QtGui.QWidget()
+        l = QtGui.QGridLayout(t)
         font = QtGui.QFont()
         font.setBold(True)
         font.setPointSize(16)
-        self.tempDisplay = QtGui.QLabel(text=u'T=-.- \u00b0C')
+        self.tempDisplay = QtGui.QLabel(text=' --.--')
         self.tempDisplay.setFont(font)
-        a.setDefaultWidget(self.tempDisplay)
+        self.tempDisplay1 = QtGui.QLabel(text=' --.--')
+        self.tempDisplay1.setFont(font)
+        self.tempGrad = QtGui.QLabel(text='--.--')
+        self.tempGrad.setAlignment(QtCore.Qt.AlignRight)
+        self.tempGrad1 = QtGui.QLabel(text='--.--')
+        self.tempGrad1.setAlignment(QtCore.Qt.AlignRight)
+        l.addWidget(self.tempDisplay,0,0)
+        l.addWidget(QtGui.QLabel(text=u'\u00b0C', font=font),0,1)
+        l.addWidget(self.tempDisplay1,0,2)
+        l.addWidget(QtGui.QLabel(text=u'\u00b0C', font=font),0,3)
+        l.addWidget(self.tempGrad,1,0)
+        l.addWidget(QtGui.QLabel(text=u'\u00b0C/min'),1,1)
+        l.addWidget(self.tempGrad1,1,2)
+        l.addWidget(QtGui.QLabel(text=u'\u00b0C/min'),1,3)
+        a.setDefaultWidget(t)
         return a
     
     def createToggledBm(self):
         a = QtGui.QWidgetAction(self)
-        #w = QtGui.QWidget()
         self.dBmCheck = QtGui.QCheckBox(text='dBm')
         self.dBmCheck.stateChanged.connect(self.showdBm)
         self.dBmCheck.setChecked(True)
@@ -286,27 +333,19 @@ class MainWindow(QtGui.QMainWindow):
         
         return item
         
-    def getTemp(self):
-        self.tc08usb.get_single()
-        temp = self.tc08usb[1]
-        tempStr = "T=" + str("{0:.1f}".format(temp)) + u' \u00b0C'
+    def getTemp(self, timeout=0.01):
+        try: 
+            temp = self.tempQ.get(True, timeout)
+        except Queue.Empty:
+            return None
+        tempStr = str("{0:.2f}".format(float(temp[0])))
         self.tempDisplay.setText(tempStr)
-        numVal = np.count_nonzero(self.__tempArray[0])
-        if numVal < self.__maxTempBuffer:
-            self.__tempArray[1][numVal] = temp
-            self.__tempArray[0][numVal] = time()#-self.startMeasurementTime
-        else:
-            self.__tempArray[1] = shift(self.__tempArray[1], -1, cval = temp)
-            self.__tempArray[0] = shift(self.__tempArray[0], -1, cval = time())#-self.startMeasurementTime)
-             
-        if numVal >1:
-            tempA = np.array(self.__tempArray[:,:numVal-1])
-            tempA[0] = tempA[0]-self.startMeasurementTime
-            if self.plotTab.currentIndex() == 1:
-                self.plotTrace.plotTemp(tempA)
+        tempStr = str("{0:.2f}".format(float(temp[1])))
+        self.tempDisplay1.setText(tempStr)
         
     def initTempArray(self):
-        self.__tempArray = np.zeros((2,self.__maxTempBuffer))
+        self.__tempArray = None
+        self.__tempArray = np.zeros((3,self.__maxTempBuffer))
         
     
     def readDataFromQ(self):
@@ -321,19 +360,39 @@ class MainWindow(QtGui.QMainWindow):
         else:
             return 0,0,0       
             
-    def saveLastData(self, timestamp, numPeaks):
+    def saveLastData(self, numPeaks):
         if self.logFile:
-            print('save Data')
+            #print('save Data')
             temp = self.tempDisplay.text()
             temp = temp.split(' ')
-            _str = str(timestamp) + '\t' + str(temp[0]) + '\t'
+            temp1 = self.tempDisplay1.text()
+            temp1 = temp1.split(' ')
             for i, chan in enumerate(self.channelList):
-                peaks = self.__fbg.channels[chan-1].getLastValues(numPeaks[i])
-                for val in peaks:
-                    _str += str("{0:.3f}".format(val)) + '\t'
-            _str = '\n'
-            print(_str)
-            self.logFile.write(_str)
+                _str = ''
+            
+                _time, peaks, _max, cmax, cog, fwhm, amp = self.__fbg.channels[chan-1].getLastValues(numPeaks[i])
+                _str += str(_time) + '\t' 
+                if temp[0]: _str += str(temp[0]) + '\t'
+                if temp1[0]: _str += str(temp1[0]) + '\t'
+                for j in range(len(peaks)):
+                    _str += str("{0:.3f}".format(peaks[j])) + '\t'
+                   # _str += str("{0:.3f}".format(cmax[j])) + '\t'
+                    #if cog:
+                        #_str += str("{0:.3f}".format(cog[j])) + '\t'
+                    _str += str("{0:.3f}".format(_max[j])) + '\t'
+                    if fwhm:
+                        _str += str("{0:.3f}".format(fwhm[j])) + '\t'
+                    #if amp:
+                       # _str += str(amp[j]) + '\t'
+                _str += '\n'
+                print(_str)
+                self.logFile[i].write(_str)
+            
+    def saveLastSpectrum(self):
+       
+            
+                    pass
+        
             
     def scaleInputSpectrum(self):
         _min = float(self.minWlSpin.value())
@@ -365,6 +424,7 @@ class MainWindow(QtGui.QMainWindow):
         if self.Monitor:
             self.Monitor.setChannelList(self.channelList)
         self.plotSpec.setChannelList(self.channelList)
+        self.plotTrace.setChannelList(self.channelList)
         
     def showdBm(self, state):
         if state:
@@ -374,16 +434,15 @@ class MainWindow(QtGui.QMainWindow):
             
     def startMeasurement(self):
         self.__fbg = FBGData()
-        self.logFileName = strftime('%Y%m%d_%H%M%S') + '.log'
-        self.logFile = open(self.logFileName,'w')
         self.plotTrace.initTraces([0,],0)
-        self.__freq = self.freqSpin.value()
+        self.__freq = self.setFreqAction.value()
         self.updateTimer = QtCore.QTimer()
         self.updateTimer.timeout.connect(self.updateData)
         
         #initialize Queue
         self.dataQ = Queue.Queue(100)
         self.initTempArray()
+        self.plotTrace.clearPlot()
         self.Monitor = MonitorHyperionThread(self.dataQ, self.si255, 
                                          self.channelList, specDevider=self.__freq)
         self.Monitor.start()
@@ -402,15 +461,38 @@ class MainWindow(QtGui.QMainWindow):
         
                 
     def stopMeasurement(self):
-        if self.__freq <10:
-            self.Monitor.join(0.1)
-            self.Monitor = None
-            self.si255.disable_spectrum_streaming()
-        
+        self.Monitor.join(0.1)
+        self.Monitor = None
+        self.si255.disable_spectrum_streaming()
+        self.recordAction.setChecked(False)
         self.measurementActive = False
         self.updateTimer.stop()
         self.setActionState()
-        self.logFile.close()
+        
+    def startStopRecord(self):
+        if self.recordAction.isChecked():
+            self.initTempArray()
+            self.scaleAction.setEnabled(False)
+            self.selectChannelAction.setEnabled(False)
+            self.__fbg = FBGData()
+            self.startMeasurementTime = time()
+            timeStr = strftime('%Y%m%d_%H%M%S') 
+            self.logFile = []
+            
+            for i, chan in enumerate(self.channelList):
+                fileStr = timeStr + '_Ch' + str(chan) + '.log'
+                logFileName = os.path.join(os.getenv('AppData'),'Python', 'MultiSpec', 'LOG', fileStr)
+            
+                self.logFile.append(open(logFileName,'w'))
+            print('Log Files: ', len(self.logFile))
+            
+        else:
+            self.scaleAction.setEnabled(True)
+            self.selectChannelAction.setEnabled(True)
+            for i in self.logFile:
+                i.close()
+            
+                
         
     def toggleThermo(self):
         if self.connectThermoAction.isChecked():
@@ -420,21 +502,43 @@ class MainWindow(QtGui.QMainWindow):
     
     def updateData(self):
         numPeaks = 0
-        data = np.zeros((1,1))
+        #data = np.zeros((1,1))
         data, timestamp, success  = self.readDataFromQ()
+        if not success: return None
+        
         actualTime = timestamp-self.startMeasurementTime
-        if not success: return
+        if self.tempConnected:
+            temp = float(self.tempDisplay.text())
+            temp1 = float(self.tempDisplay1.text())
+            numTempVal = np.count_nonzero(self.__tempArray[0])
+            if numTempVal < self.__maxTempBuffer:
+                self.__tempArray[1][numTempVal] = temp
+                self.__tempArray[2][numTempVal] = temp1
+                self.__tempArray[0][numTempVal] = actualTime#-self.startMeasurementTime
+            else:
+                self.__tempArray[1] = shift(self.__tempArray[1], -1, cval = temp)
+                self.__tempArray[2] = shift(self.__tempArray[2], -1, cval = temp1)
+                self.__tempArray[0] = shift(self.__tempArray[0], -1, cval = actualTime)#-self.startMeasurementTime)
+            
+            self.calcTempGradient(numTempVal)
+
         if len(data[:,0]) == len(self.channelList):
-            numPeaks = self.__fbg.searchPeaks(self.__scaledWavelength, data,self.channelList, 
+            if self.setFreqAction.value() < 5:
+                numPeaks = self.__fbg.searchPeaks(self.__scaledWavelength, data,self.channelList, 
                                        self.channelSelection, actualTime)
-        #print('Anzahl Peaks total :', sum(numPeaks))
+            else:
+                numPeaks = self.__fbg.searchPeaks(self.__scaledWavelength, data,self.channelList, 
+                                       self.channelSelection, actualTime, peakfit=1)
         if self.plotTab.currentIndex() == 0:
             self.plotSpec.plotS(self.__scaledWavelength, data)
         else:
             self.plotTrace.plotTraces(self.channelList, numPeaks, self.__fbg)
-            
+            if self.tempConnected:
+                self.plotTrace.plotTemp(self.__tempArray[:,:numTempVal])
+                
         if self.recordAction.isChecked() and self.__freq >= 10:
-            self.saveLastData(actualTime, numPeaks)
+            self.saveLastData(numPeaks)
+            
 
         dt = timestamp-self.lastTime
         if timestamp:
