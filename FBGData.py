@@ -16,7 +16,7 @@ class Channel():
     def __init__(self):
         
         self.__maxPeaks = 30
-        self.__maxBuffer = 5000
+        self.__maxBuffer = 50000
         self.__numTracePoints = 0
         self.traces = np.zeros((self.__maxPeaks,self.__maxBuffer), dtype={'names':['time', 'cen', 'max', 'cenmax', 'cog', 'fwhm', 'amp'], 'formats':['f4','f4','f4','f4','f4','f4','f4']})#col[0] timestamp 
         self.num = -1

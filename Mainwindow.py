@@ -12,7 +12,7 @@ __about__ = """Hyperion si255 Interrogation Software
             including PicoLog Temprature measurements
             """
 __version__ = '0.1.3'
-__date__ = '22.03.2016'
+__date__ = '08.11.2016'
 __author__ = 'Roman Flehr'
 __cp__ = u'\u00a9 2016 Loptek GmbH & Co. KG'
 
@@ -47,8 +47,8 @@ class MainWindow(QtGui.QMainWindow):
         self.__numPeaksArray = [0,0,0,0]
         self.Monitor = None
         self.__freq = 1 #hyperion Spectrum Divider
-        self.__maxTempBuffer = 5000
-        self.__tempArray = np.zeros((2,self.__maxTempBuffer))
+        self.__maxTempBuffer = 50000
+        self.__tempArray = np.zeros((3,self.__maxTempBuffer))
         self.tempGradientInterval = 60 # in sec
         self.__fbg = FBGData()
         self.logFile = []#None #log-file handle

@@ -25,7 +25,7 @@ class TracePlot(QtGui.QWidget):
         black = QtGui.QColor(0,0,0)
         
         self.colArray = [blue, red, green, black]
-        self.YAxisLabel = ['Wellenlänge [nm]', 'Amplitude [dBm]' , 'FWHM [nm]']
+        self.YAxisLabel = ['Wellenlänge [nm]', 'Amplitude [dBm]' , 'FWHM [nm]', u'\u0394Wellenlänge [pm]']
         
         self.lineWidth = 0
         self.backColor = QtGui.QColor(255,255,255)
@@ -70,7 +70,7 @@ class TracePlot(QtGui.QWidget):
         self.showTempPlot.setChecked(True)
         self.showTempPlot.stateChanged.connect(self.showTemp)
         self.selectPlotData = QtGui.QComboBox(self)
-        self.selectPlotData.addItems(['Center','Amplitude','FWHM'])
+        self.selectPlotData.addItems(['Center','Amplitude','FWHM', u'\u0394Center'])
         self.selectPlotData.currentIndexChanged.connect(self.changePlotData)
         
         w = QtGui.QWidget()
@@ -146,9 +146,11 @@ class TracePlot(QtGui.QWidget):
                         y = _fbg.channels[numChannels[i]-1].getTraceMax(j)
                     elif plotData == 2:
                         y = _fbg.channels[numChannels[i]-1].getTraceFWHM(j)
-                    else:
+                    elif plotData == 3:
                         y = _fbg.channels[numChannels[i]-1].getTrace(j)
-                        
+                    else:
+                        y = _fbg.channels[numChannels[i]-1].getTraceMax(j)
+                        y = (y - y[0])*1000
                     self.__traces[n].setData(_x,y)
                     n+=1
             
