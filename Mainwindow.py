@@ -166,7 +166,7 @@ class MainWindow(QtGui.QMainWindow):
                 self.tempMon.start()
                 self.updateTempTimer = QtCore.QTimer()
                 self.updateTempTimer.timeout.connect(self.getTemp)
-                self.updateTempTimer.start(100)
+                self.updateTempTimer.start(50)
             else:
                 self.tempConnected = False
                 self.connectThermoAction.setChecked(False)

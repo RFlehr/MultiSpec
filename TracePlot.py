@@ -146,10 +146,10 @@ class TracePlot(QtGui.QWidget):
                         y = _fbg.channels[numChannels[i]-1].getTraceMax(j)
                     elif plotData == 2:
                         y = _fbg.channels[numChannels[i]-1].getTraceFWHM(j)
-                    elif plotData == 3:
+                    elif plotData == 0:
                         y = _fbg.channels[numChannels[i]-1].getTrace(j)
                     else:
-                        y = _fbg.channels[numChannels[i]-1].getTraceMax(j)
+                        y = _fbg.channels[numChannels[i]-1].getTrace(j)
                         y = (y - y[0])*1000
                     self.__traces[n].setData(_x,y)
                     n+=1

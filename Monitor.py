@@ -64,6 +64,7 @@ class MonitorTC08USBThread(threading.Thread):
         self.alive.set()    
         self.tc08 = device
         self.tc08.set_mains(50)
+        self.tc08.set_channel(0, USBTC08_TC_TYPE.C)
         self.tc08.set_channel(1, USBTC08_TC_TYPE.K)
         self.tc08.set_channel(2, USBTC08_TC_TYPE.K)
         

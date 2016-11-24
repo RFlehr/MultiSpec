@@ -15,9 +15,9 @@ class PeakTable(QtGui.QTableWidget):
         self.__rowStr = 'Channel '
         self.__cL = channelList
         self.__pL = peakList
-        
-        self.__numCols = max(self.__pL)
-        self.__numRows = len(self.__cL)
+        print(self.__cL, self.__pL)
+        self.__numCols = len(self.__cL)
+        self.__numRows = len(self.__pL)
         
         self.initTable()
         print(self.__numCols, self.__numRows)
